@@ -1,0 +1,50 @@
+name: Create and publish docker image
+
+on:
+  push:
+    branches: ["*"]
+
+env:
+  REGISTRY: ghcr.io
+  TZ: UTC
+
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BUILDAH_ISOLATION: chroot
+
+    steps:
+      - name: login to github
+        run: |
+          buildah login -u "$GITHUB_REPOSITORY_OWNER" -p "$GITHUB_TOKEN" "$REGISTRY"
+          echo "machine github.com login $GITHUB_REPOSITORY_OWNER password $GITHUB_TOKEN" > $HOME/.netrc
+
+      - uses: actions/checkout@v3
+
+      - name: setup environment
+        run: |
+          saveEnv() { while [ $# -gt 0 ];do printf "%s=%q\n" "${1}" "${!1}" >> $GITHUB_ENV;shift;done; }
+
+          COMMIT_DATE="$(git show --format=%cd -q --date format-local:%Y%m%d%H%M%S)"
+          TAGPART="${COMMIT_DATE}-${GITHUB_SHA:0:10}"
+          TAG="${GITHUB_REF_NAME}-${TAGPART}"
+          BTAG="b-${TAGPART}"
+          SENTRY_RELEASE="$BTAG"
+
+          saveEnv TAG BTAG SENTRY_RELEASE
+
+      - name: build docker image
+        run: |
+          buildah bud -t "$REGISTRY/$GITHUB_REPOSITORY:$TAG"
+
+      - name: push image to tag and copy to btag
+        run: |
+          buildah push "$REGISTRY/$GITHUB_REPOSITORY:$TAG"
+          skopeo copy docker://$REGISTRY/$GITHUB_REPOSITORY:$TAG docker://$REGISTRY/$GITHUB_REPOSITORY:$BTAG

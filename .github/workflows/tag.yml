@@ -1,0 +1,47 @@
+name: Update tags for docker image
+
+on:
+  push:
+    tags: ["*"]
+
+env:
+  REGISTRY: ghcr.io
+  TZ: UTC
+
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BUILDAH_ISOLATION: chroot
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: login to registry
+        run: |
+          buildah login -u "$GITHUB_REPOSITORY_OWNER" -p "$GITHUB_TOKEN" "$REGISTRY"
+          echo "machine github.com login $GITHUB_REPOSITORY_OWNER password $GITHUB_TOKEN" > $HOME/.netrc
+
+      - name: update image tags with git tag
+        run: |
+          set -x
+          COMMIT_DATE="$(git show --format=%cd -q --date format-local:%Y%m%d%H%M%S)"
+          TAGPART="${COMMIT_DATE}-${GITHUB_SHA:0:10}"
+          BTAG="b-${TAGPART}"
+          echo -n "checking for b-tag: "
+          while true;do
+            if skopeo list-tags docker://"$REGISTRY/$GITHUB_REPOSITORY" | jq --arg t "$BTAG" -e '[.Tags[] | select(. == $t)] | any';then
+              echo "found"
+              break
+            fi
+            echo "not found.  sleeping 10 seconds before retrying"
+            sleep 10
+          done
+          skopeo copy docker://$REGISTRY/$GITHUB_REPOSITORY:$BTAG docker://$REGISTRY/$GITHUB_REPOSITORY:$GITHUB_REF_NAME
